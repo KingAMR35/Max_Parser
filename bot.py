@@ -21,10 +21,10 @@ def escape_markdown_v2(text: str) -> str:
     if not text:
         return ""
     
-    # MarkdownV2 требует ЭТОТ список символов:
+
     special_chars = r'_*[]()~`>#+-=|{}.!'
     
-    # ДВОЙНОЕ экранирование для Python → Telegram
+
     for char in special_chars:
         text = text.replace(char, f'\\\\{char}')
     

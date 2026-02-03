@@ -7,7 +7,7 @@ from typing import List, Dict
 from config import MAX_GROUP_URL, MAX_PHONE
 from datetime import datetime
 
-# 🔥 СЕССИЯ сохраняется в папке
+
 SESSION_DIR = "max_session"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
@@ -34,7 +34,6 @@ def is_human_message(text: str) -> bool:
     """🚫 Боты → ✅ Только люди"""
     text = text.strip().lower()
     
-    # 🚫 Системные сообщения ботов
     bot_phrases = [
         'теперь в max', 'напишите что-нибудь', 'сферум',
         'удалил', 'удалила', 'изменил', 'изменила', 'обновил', 'обновила',
@@ -45,7 +44,7 @@ def is_human_message(text: str) -> bool:
         print(f"🤖 Бот: '{text[:40]}...'")
         return False
     
-    # ✅ Реальные сообщения
+
     return (15 < len(text) < 600 and 
             text[0].isalpha() and 
             not re.match(r'^\d+$', text))
@@ -55,18 +54,17 @@ def parse_max_group_media() -> List[Dict]:
     human_posts = []
     
     with sync_playwright() as p:
-        # 🔥 ВОССТАНАВЛИВАЕМ СЕССИЮ браузера
         browser = p.chromium.launch_persistent_context(
             user_data_dir=SESSION_DIR,
-            headless=False,  # Видим браузер
+            headless=False,  
             viewport={'width': 1920, 'height': 1080},
-            slow_mo=300  # Медленно — для отладки
+            slow_mo=300  
         )
         page = browser.pages[0] if browser.pages else browser.new_page()
         
         print("🔍 MAX автологин...")
         
-        # 1. Проверяем авторизацию
+        
         current_url = page.url
         if "web.max.ru" not in current_url or "login" in current_url:
             print("📱 Нужна авторизация...")
@@ -79,27 +77,27 @@ def parse_max_group_media() -> List[Dict]:
                     phone_input.fill(MAX_PHONE)
                     page.click("button, input[type='submit']")
                     print("❗ ПЕРВЫЙ РАЗ: Введите SMS код в браузере (2 минуты)...")
-                    page.wait_for_timeout(120000)  # Ждём SMS
+                    page.wait_for_timeout(120000)  
                 else:
                     print("✅ Уже авторизованы")
             except Exception as e:
                 print(f"⚠️ Авторизация: {e}")
         
-        # 2. Открываем группу
+        
         print(f"📱 Переходим: {MAX_GROUP_URL}")
         page.goto(MAX_GROUP_URL)
-        page.wait_for_timeout(10000)  # Ждём загрузки группы
+        page.wait_for_timeout(10000)  
         
-        # 3. СКРОЛЛ К САМЫМ НОВЫМ СООБЩЕНИЯМ
+        
         print("⬆️ Скроллим к новым сообщениям...")
         page.keyboard.press("Home")
         page.wait_for_timeout(2000)
         page.keyboard.press("Home")
         page.wait_for_timeout(2000)
-        page.keyboard.press("Control+Home")  # Максимум вверх
+        page.keyboard.press("Control+Home")  
         page.wait_for_timeout(4000)
         
-        # 4. Ищем сообщения (ТОЛЬКО ПЕРВЫЕ = НОВЫЕ)
+        
         message_selectors = [
             "div[class*='message']",
             "div[class*='chat-message']", 
@@ -111,7 +109,7 @@ def parse_max_group_media() -> List[Dict]:
         all_candidates = []
         for selector in message_selectors:
             try:
-                elements = page.query_selector_all(selector)[:20]  # ТОЛЬКО ПЕРВЫЕ 20!
+                elements = page.query_selector_all(selector)[:20]  
                 print(f"   {selector}: {len(elements)}")
                 all_candidates.extend(elements)
             except Exception as e:
@@ -119,17 +117,17 @@ def parse_max_group_media() -> List[Dict]:
         
         print(f"📦 Кандидатов найдено: {len(all_candidates)}")
         
-        # 5. ФИЛЬТРУЕМ только ЛЮДЕЙ (ТОЛЬКО ПЕРВЫЕ 5)
+        
         human_count = 0
-        for i, elem in enumerate(set(all_candidates[:25])):  # Убираем дубли
+        for i, elem in enumerate(set(all_candidates[:25])):  
             try:
                 full_text = elem.text_content().strip()
                 
-                # Проверяем — человек ли?
+                
                 if not is_human_message(full_text):
                     continue
                 
-                # Ищем ИМЯ пользователя
+                
                 name = "Пользователь"
                 name_selectors = [
                     "[class*='name']", "[class*='author']", 
@@ -143,7 +141,7 @@ def parse_max_group_media() -> List[Dict]:
                             name = name_text[:30]
                             break
                 
-                # 🔥 МЕДИА (картинки, НЕ аватарки)
+                
                 media_files = []
                 imgs = elem.query_selector_all("img")
                 for img in imgs[:2]:
@@ -158,7 +156,7 @@ def parse_max_group_media() -> List[Dict]:
                                 'type': 'image'
                             })
                 
-                # ✅ РЕАЛЬНОЕ сообщение человека!
+
                 post_data = {
                     'id': f'human_{human_count}_{int(time.time())}',
                     'name': name,
@@ -171,7 +169,7 @@ def parse_max_group_media() -> List[Dict]:
                 human_count += 1
                 print(f"✅ #{human_count} 👤{name}: '{full_text[:60]}...' | 📁{len(media_files)}")
                 
-                if human_count >= 5:  # ДОВОЛЬНО!
+                if human_count >= 5:  
                     break
                     
             except Exception as e:
