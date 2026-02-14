@@ -5,7 +5,7 @@ import os
 import time
 import re
 from max_playwright_parser import parse_max_group_media
-from config import BOT_TOKEN
+from configuration import BOT_TOKEN
 from telebot import types
 
 print("🚀 MAX Parser Bot запущен")
@@ -109,9 +109,12 @@ def menu_button():
     button = types.InlineKeyboardButton(text='▶️ Начать парсинг', callback_data='button')
     button1 = types.InlineKeyboardButton(text='🗑 Очистить кэш', callback_data='button1')
     button2 = types.InlineKeyboardButton(text='📊 Статистика', callback_data='button2')
-    button3 = types.InlineKeyboardButton(text='🤖Тест бота', callback_data='button3')
+    button3 = types.InlineKeyboardButton(text='🤖 Тест бота', callback_data='button3')
+    button4 = types.InlineKeyboardButton(text='🆕 Обновления', callback_data='button4')
+    button5 = types.InlineKeyboardButton(text='📌 О боте', callback_data='button5')
     keyboard.row(button)
     keyboard.row(button1, button2)
+    keyboard.row(button4, button5)
     keyboard.row(button3)
     return keyboard
 
@@ -129,14 +132,36 @@ def comeback111():
 
 @bot.message_handler(commands=['start'])
 def start_bot(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "Это команда только для админа 🤓. И даже не вздумай клянчить админку😁.\n\nИди почитай инструкцию --> /help", reply_markup=comeback111())
-        return
-    bot.send_message(message.chat.id, "А вот и менюшка😊", reply_markup=menu_button())
+    bot.send_message(message.chat.id, "А вот и менюшка😊.", reply_markup=menu_button())
 
-@bot.message_handler(commands=['help'])
-def start(message):
-    bot.reply_to(message, "Всем привет! 👋 Этот бот парсит сообщения из MAX (фото+видео+текст). Только для админа!")
+@bot.callback_query_handler(func=lambda call: call.data == 'button4')
+def new(call):
+    bot.edit_message_text("""Всем привет 👋  
+
+Представляю вам все обновления Max_parser!
+
+🚀 Что изменилось:  
+
+🕰️ Бот отправляет правильное время(когда его отправили в максе).  
+📸 Отправляет фотографии, сохраняя их качество.  
+📲 Каждое новое сообщение доставляется аккуратно и чётко, никаких пропусков или дубликатов.  
+💬 Сообщения стали красивыми, более удобными для чтения.
+                 
+⭐ Есть и небольшие минусы:  
+
+❌ Нормальный хост не найден, бот работает только при ручном запуске(если знаете бесплатные хосты, пишите в ЛС.)
+📂 Бот не может отправлять файлы""", call.message.chat.id, call.message.message_id, reply_markup=comeback())
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'button5')
+def info(call):
+    bot.edit_message_text("""Всем привет👋
+
+Данный бот специально разработан для удобной пересылки сообщений из Макса сюда👇.
+Только админ может управлять им.
+Вам доступны только кнопки 🆕Обновления и 📌О боте. 
+Приятного вам использования!""", call.message.chat.id, call.message.message_id, reply_markup=comeback())
+
 
 @bot.callback_query_handler(func=lambda call: call.data == 'button01')
 def callback_message(call):
@@ -149,7 +174,7 @@ def callback_message2(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'button3')
 def test(call):
     if call.from_user.id != ADMIN_ID:
-        bot.send_message(call.message.chat.id, "Это команда только для админа 🤓.\n\nИди почитай инструкцию --> /help", reply_markup=comeback111())
+        bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
         return
     bot.edit_message_text("✅ БОТ РАБОТАЕТ!", call.message.chat.id, call.message.message_id, reply_markup=comeback())
 
@@ -157,18 +182,19 @@ def test(call):
 def parse_max_command(call):
     chat_id = call.message.chat.id
     if call.from_user.id != ADMIN_ID:
-        bot.send_message(chat_id, "Это команда только для админа 🤓.\n\nИди почитай инструкцию --> /help", reply_markup=comeback111())
+        bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
         return
     
     print(f"🔍 /parsemax от {chat_id}")
     bot.edit_message_text("⏳ Парсю MAX...", chat_id, call.message.message_id, reply_markup=comeback())
+    bot.send_chat_action(chat_id, 'typing')
 
     try:
         posts = parse_max_group_media()
         new_count = 0
 
         if not posts:
-            bot.send_message(chat_id, "📭 Сообщений не найдено")
+            bot.send_message(chat_id, "📭 Сообщений не найдено", reply_markup=comeback111())
             return
 
         print(f"📢 Найдено {len(posts)} постов")
@@ -187,18 +213,18 @@ def parse_max_command(call):
                 print(f"✅ Отправлено: {post['name']} | 📁{media_sent}/{len(media_files)} файлов")
 
         result = f"✅ {new_count} НОВЫХ из {len(posts)}" if new_count else "📭 Новых сообщений нету"
-        bot.send_message(chat_id, result)
+        bot.send_message(chat_id, result, reply_markup=comeback111())
         if new_count > 0:
             save_cache()
 
     except Exception as e:
         print(f"❌ Ошибка: {e}")
-        bot.send_message(chat_id, f"❌ Ошибка: {str(e)}")
+        bot.send_message(chat_id, f"❌ Ошибка: {str(e)}", reply_markup=comeback111())
 
 @bot.callback_query_handler(func=lambda call: call.data == 'button1')
 def clear_cache(call):
     if call.from_user.id != ADMIN_ID:
-        bot.send_message(call.message.chat.id, "Это команда только для админа 🤓.\n\nИди почитай инструкцию --> /help", reply_markup=comeback111())
+        bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
         return
     global seen_hashes
     seen_hashes.clear()
@@ -209,7 +235,7 @@ def clear_cache(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'button2')
 def status(call):
     if call.from_user.id != ADMIN_ID:
-        bot.send_message(call.message.chat.id, "Это команда только для админа 🤓.\n\nИди почитай инструкцию --> /help", reply_markup=comeback111())
+        bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
         return
     cache_count = len(seen_hashes)
     bot.edit_message_text(f"📊 СТАТИСТИКА:\n📦 Кэш: {cache_count} сообщений", call.message.chat.id, call.message.message_id, reply_markup=comeback())

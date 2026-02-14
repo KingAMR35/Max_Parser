@@ -4,7 +4,8 @@ import time
 import requests
 import os
 from typing import List, Dict
-from config import MAX_GROUP_URL, MAX_PHONE
+from configuration import MAX_GROUP_URL, MAX_PHONE
+from datetime import datetime, timedelta
 
 SESSION_DIR = "max_session"
 os.makedirs(SESSION_DIR, exist_ok=True)
@@ -25,7 +26,7 @@ def download_file(url: str, filename: str = None) -> str:
         else:
             filename += '.jpg'
     
-    filename = re.sub(r'[^\w\-\.]', '_', filename)[:100]
+    filename = re.sub(r'[^\\w\\-\\.]', '_', filename)[:100]
     filepath = f"downloads/{filename}"
     
     try:
@@ -64,9 +65,64 @@ def is_human_message(text: str) -> bool:
         print(f"🤖 Бот: '{text[:40]}...'")
         return False
 
-    return (15 < len(text) < 600 and 
+    return (10 < len(text) < 800 and 
             text[0].isalpha() and 
             not re.match(r'^\d+$', text))
+
+def safe_scroll(page, target_url: str):
+    print("📜 Безопасный скролл...")
+    
+    if target_url not in page.url:
+        print(f"⚠️ Возвращаемся в чат: {target_url}")
+        page.goto(target_url)
+        page.wait_for_timeout(5000)
+    
+    for i in range(3):
+        page.keyboard.press("Home")
+        page.wait_for_timeout(1500)
+    
+    for i in range(8):
+        page.keyboard.press("PageDown")
+        page.wait_for_timeout(1200)
+        if target_url not in page.url:
+            page.goto(target_url)
+            page.wait_for_timeout(3000)
+            break
+    
+    page.wait_for_timeout(3000)
+    print("✅ Скролл завершен!")
+
+def extract_timestamp(text: str, element) -> tuple:
+    time_match = re.search(r'(\d{1,2}:\d{2})', text)
+    if time_match:
+        try:
+            dt = datetime.strptime(time_match.group(1), '%H:%M')
+            dt = dt + timedelta(hours=4)
+            timestamp = dt.timestamp()
+            return timestamp, 0
+        except:
+            pass
+    
+    timestamp_attrs = ['data-timestamp', 'data-time', 'title', 'datetime']
+    for attr in timestamp_attrs:
+        ts = element.get_attribute(attr)
+        if ts:
+            try:
+                for fmt in ['%H:%M', '%Y-%m-%d %H:%M', '%d.%m.%Y %H:%M']:
+                    dt = datetime.strptime(ts, fmt)
+                    dt = dt + timedelta(hours=4)  # 🔥 +4 часа
+                    return dt.timestamp(), 1
+            except:
+                pass
+    
+    try:
+        box = element.bounding_box()
+        if box:
+            return box['y'], 2
+    except:
+        pass
+    
+    return time.time(), 3
 
 def parse_max_group_media() -> List[Dict]:
     human_posts = []
@@ -74,17 +130,16 @@ def parse_max_group_media() -> List[Dict]:
     with sync_playwright() as p:
         browser = p.chromium.launch_persistent_context(
             user_data_dir=SESSION_DIR,
-            headless=False,  
+            headless=False,
             viewport={'width': 1920, 'height': 1080},
-            slow_mo=300  
+            slow_mo=300
         )
         page = browser.pages[0] if browser.pages else browser.new_page()
         
         print("🔍 MAX автологин...")
-        
         current_url = page.url
         if "web.max.ru" not in current_url or "login" in current_url:
-            print("📱 Нужна авторизация...")
+            print("📱 Авторизация...")
             page.goto("https://web.max.ru")
             page.wait_for_timeout(5000)
             
@@ -93,24 +148,16 @@ def parse_max_group_media() -> List[Dict]:
                 if phone_input:
                     phone_input.fill(MAX_PHONE)
                     page.click("button, input[type='submit']")
-                    print("❗ ПЕРВЫЙ РАЗ: Введите SMS код в браузере (2 минуты)...")
-                    page.wait_for_timeout(120000)  
-                else:
-                    print("✅ Уже авторизованы")
-            except Exception as e:
-                print(f"⚠️ Авторизация: {e}")
+                    print("❗ Введите SMS код (2 минуты)...")
+                    page.wait_for_timeout(120000)
+            except:
+                pass
         
-        print(f"📱 Переходим: {MAX_GROUP_URL}")
+        print(f"📱 Чат: {MAX_GROUP_URL}")
         page.goto(MAX_GROUP_URL)
-        page.wait_for_timeout(10000)  
+        page.wait_for_timeout(10000)
         
-        print("⬆️ Скроллим к новым сообщениям...")
-        page.keyboard.press("Home")
-        page.wait_for_timeout(2000)
-        page.keyboard.press("Home")
-        page.wait_for_timeout(2000)
-        page.keyboard.press("Control+Home")  
-        page.wait_for_timeout(4000)
+        safe_scroll(page, MAX_GROUP_URL)
         
         message_selectors = [
             "div[class*='message']",
@@ -124,22 +171,44 @@ def parse_max_group_media() -> List[Dict]:
         all_candidates = []
         for selector in message_selectors:
             try:
-                elements = page.query_selector_all(selector)[:20]  
-                print(f"   {selector}: {len(elements)}")
+                elements = page.query_selector_all(selector)
+                print(f"🔍 {selector}: {len(elements)}")
                 all_candidates.extend(elements)
-            except Exception as e:
-                print(f"   {selector}: ошибка")
+            except:
+                pass
         
-        print(f"📦 Кандидатов найдено: {len(all_candidates)}")
+        unique_candidates = list(set(all_candidates))
+        print(f"📦 Кандидатов: {len(unique_candidates)}")
         
-        human_count = 0
-        for i, elem in enumerate(set(all_candidates[:25])):  
+        post_candidates = []
+        for i, elem in enumerate(unique_candidates):
             try:
                 full_text = elem.text_content().strip()
-                
-                if not is_human_message(full_text):
+                if len(full_text) < 10 or not is_human_message(full_text):
                     continue
                 
+                timestamp, priority = extract_timestamp(full_text, elem)
+                
+                post_candidates.append({
+                    'element': elem,
+                    'text': full_text,
+                    'timestamp': timestamp,
+                    'priority': priority,
+                    'index': i
+                })
+                
+            except Exception as e:
+                continue
+        
+        post_candidates.sort(key=lambda x: (x['timestamp'], x['priority'], x['index']))
+        print(f"📊 Отсортировано: {len(post_candidates)} (СТАРЫЕ → НОВЫЕ +4ч)")
+        
+        human_count = 0
+        for candidate in post_candidates:
+            elem = candidate['element']
+            full_text = candidate['text']
+            
+            try:
                 name = "Пользователь"
                 name_selectors = [
                     "[class*='name']", "[class*='author']", 
@@ -156,8 +225,9 @@ def parse_max_group_media() -> List[Dict]:
                 
                 media_files = []
                 
+                # Изображения
                 imgs = elem.query_selector_all("img")
-                for img in imgs[:3]:
+                for img in imgs[:5]:
                     src = (img.get_attribute("src") or 
                            img.get_attribute("data-src") or 
                            img.get_attribute("srcset"))
@@ -166,34 +236,29 @@ def parse_max_group_media() -> List[Dict]:
                         continue
                     
                     src_lower = src.lower()
-                    
                     avatar_banlist = [
                         'avatar', 'profile', 'userpic', 'photo-', 'icon', 'logo', 
-                        'emoji', 'sticker', 'thumb', 'preview', 'small', 'circle', 
-                        'round', 'badge', 'placeholder', '/static/', '/assets/', 
-                        'default', 'blank', 'user-', 'profile-'
+                        'emoji', 'sticker', 'thumb', 'preview', 'small', 'circle'
                     ]
                     
                     if any(ban in src_lower for ban in avatar_banlist):
-                        print(f"🚫 АВАТАРКА пропущена: {src[:60]}...")
                         continue
                     
                     width = img.get_attribute("width")
                     height = img.get_attribute("height")
-                    if width and int(width) < 200:
+                    if width and int(width) < 150:
                         continue
-                    if height and int(height) < 200:
+                    if height and int(height) < 150:
                         continue
                     
                     try:
                         box = img.bounding_box()
-                        if box and (box['width'] < 150 or box['height'] < 150):
-                            print(f"🚫 Маленькое изображение: {box['width']}x{box['height']}")
+                        if box and (box['width'] < 120 or box['height'] < 120):
                             continue
                     except:
                         pass
                     
-                    print(f"🖼️ ИЗОБРАЖЕНИЕ ОК: {src[:60]}...")
+                    print(f"🖼️ [{human_count+1}] {src[:60]}...")
                     local_path = download_file(src)
                     if local_path:
                         media_files.append({
@@ -202,15 +267,15 @@ def parse_max_group_media() -> List[Dict]:
                             'type': 'image'
                         })
                 
-                video_selectors = ["video", "video source", "[data-video]"]
+                video_selectors = ["video", "video source"]
                 for video_sel in video_selectors:
                     video_elements = elem.query_selector_all(video_sel)
-                    for video_elem in video_elements[:1]:
+                    for video_elem in video_elements:
                         src = (video_elem.get_attribute("src") or 
                                video_elem.get_attribute("data-src"))
                         
                         if src and len(src) > 50:
-                            print(f"🎥 ВИДЕО ОК: {src[:60]}...")
+                            print(f"🎥 [{human_count+1}] {src[:60]}...")
                             local_path = download_file(src)
                             if local_path:
                                 media_files.append({
@@ -223,35 +288,38 @@ def parse_max_group_media() -> List[Dict]:
                 post_data = {
                     'id': f'human_{human_count}_{int(time.time())}',
                     'name': name,
-                    'text': full_text[:450],
+                    'text': full_text[:600],
                     'media_files': media_files,
+                    'timestamp': candidate['timestamp']
                 }
                 
                 human_posts.append(post_data)
                 human_count += 1
-                media_types = [m['type'] for m in media_files]
-                print(f"✅ #{human_count} 👤{name}: '{full_text[:60]}...' | 📁{len(media_files)} {media_types}")
                 
-                if human_count >= 5:  
-                    break
-                    
+                try:
+                    display_time = time.strftime('%H:%M', time.localtime(candidate['timestamp']))
+                    print(f"✅ #{human_count} [{display_time}] 👤{name}")
+                except:
+                    print(f"✅ #{human_count} 👤{name}")
+                
             except Exception as e:
-                print(f"❌ Элемент {i}: {e}")
+                print(f"⚠️ Пост {human_count}: {str(e)[:50]}")
                 continue
         
         browser.close()
     
-    print(f"🎉 НАЙДЕНО {len(human_posts)} человеческих сообщений")
+    print(f"🎉 НАЙДЕНО {len(human_posts)} сообщений!")
     return human_posts
 
 if __name__ == "__main__":
-    print("ТЕСТ парсера...")
+    print("🚀 ТЕСТ парсера...")
     posts = parse_max_group_media()
-    print("\n📋 РЕЗУЛЬТАТ:")
-    for i, post in enumerate(posts, 1):
-        print(f"{i}. 👤 {post['name']}")
+    print("\n📋 ПЕРВЫЕ 5 В ПОРЯДКЕ (+4ч):")
+    for i, post in enumerate(posts[:5], 1):
+        try:
+            display_time = time.strftime('%H:%M', time.localtime(post['timestamp']))
+            print(f"{i}. 👤 {post['name']} | [{display_time}]")
+        except:
+            print(f"{i}. 👤 {post['name']}")
         print(f"   {post['text'][:100]}...")
-        if post['media_files']:
-            for media in post['media_files']:
-                print(f"   📁 {media['type']}: {media['local_path']}")
-    print(f"\n✅ Готово! {len(posts)} сообщений")
+    print(f"\n✅ Всего: {len(posts)} сообщений")
