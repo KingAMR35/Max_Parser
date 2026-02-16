@@ -13,6 +13,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 ADMIN_ID = 5213315899
 CACHE_FILE = "seen_messages.json"
+CACHE_FILE2 = "seen_images.json"
 seen_hashes = set()
 
 def escape_markdown_v2(text: str) -> str:
@@ -228,8 +229,9 @@ def clear_cache(call):
         return
     global seen_hashes
     seen_hashes.clear()
-    if os.path.exists(CACHE_FILE):
+    if os.path.exists(CACHE_FILE) and os.path.exists(CACHE_FILE2):
         os.remove(CACHE_FILE)
+        os.remove(CACHE_FILE2)
     bot.edit_message_text("🗑 Кэш очищен!", call.message.chat.id, call.message.message_id, reply_markup=comeback())
 
 @bot.callback_query_handler(func=lambda call: call.data == 'button2')
