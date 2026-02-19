@@ -4,6 +4,8 @@ import json
 import os
 import time
 import re
+import threading
+from datetime import datetime
 from max_playwright_parser import parse_max_group_media
 from configuration import BOT_TOKEN
 from telebot import types
@@ -16,6 +18,10 @@ CACHE_FILE = "seen_messages.json"
 CACHE_FILE2 = "seen_images.json"
 seen_hashes = set()
 
+PARSING_ACTIVE = False
+PARSING_THREAD = None
+CURRENT_CHAT_ID = None
+
 def escape_markdown_v2(text: str) -> str:
     if not text:
         return ""
@@ -26,13 +32,20 @@ def escape_markdown_v2(text: str) -> str:
 
 def load_cache():
     global seen_hashes
+    all_hashes = set()
+    
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                seen_hashes = set(json.load(f).get('hashes', []))
-            print(f"📦 Кэш: {len(seen_hashes)} сообщений")
-        except:
-            seen_hashes = set()
+                data = json.load(f)
+                all_hashes.update(data.get('hashes', []))
+                all_hashes.update(data.get('message_hashes', []))
+            print(f"📦 Кэш загружен: {len(all_hashes)} сообщений")
+        except Exception as e:
+            print(f"❌ Ошибка кэша: {e}")
+    
+    seen_hashes = all_hashes
+
 
 def save_cache():
     try:
@@ -58,7 +71,7 @@ def send_media_safely(chat_id, media_files, status, new_count, post_name):
         if not os.path.exists(local_path):
             print(f"❌ Файл НЕ существует: {local_path}")
             continue
-            
+        
         file_size = os.path.getsize(local_path)
         if file_size > 50 * 1024 * 1024:
             print(f"❌ Файл слишком большой: {file_size/1024/1024:.1f}MB")
@@ -96,18 +109,58 @@ def format_message(post, status, new_count, media_sent):
         time_str = ""
         main_text = full_text
     
-    result = f"{status} 🆕 #{new_count}\n"
-    result += f"{post['name']} :\n"
-    result += f"{main_text}\n"
+    result = f"{status} 🆕 *{new_count}*\n"
+    result += f"*{main_text}*\n"
     result += f"{time_str}"
     
     return result.strip()
 
+# АВТОПАРСИНГ
+def parse_max_loop(chat_id):
+    """Бесконечный цикл парсинга каждые 20 секунд"""
+    global PARSING_ACTIVE
+    while PARSING_ACTIVE:
+        try:
+            print(f"🔄 Автопарсинг для чата {chat_id}...")
+            
+            posts = parse_max_group_media()
+            new_count = 0
+
+            if not posts:
+                print("📭 Новых сообщений не найдено")
+            else:
+                print(f"📢 Найдено {len(posts)} постов")
+                
+                for post in posts:
+                    if is_new_message(post):
+                        status = "👤"
+                        media_files = post.get('media_files', [])
+                        media_sent = send_media_safely(chat_id, media_files, status, new_count+1, post['name'])
+
+                        msg_text = format_message(post, status, new_count+1, media_sent)
+                        bot.send_message(chat_id, msg_text, parse_mode='Markdown')
+                        new_count += 1
+                        print(f"✅ Отправлено: {post['name']} | 📁{media_sent}/{len(media_files)} файлов")
+
+                if new_count > 0:
+                    save_cache()
+                    result = f"✅ *{new_count} НОВЫХ* из {len(posts)} всего"
+                    bot.send_message(chat_id, result, parse_mode='Markdown', reply_markup=comeback111())
+            
+            time.sleep(20) 
+            
+        except Exception as e:
+            print(f"❌ Ошибка автопарсинга: {e}")
+            time.sleep(20)
+
 load_cache()
 
 def menu_button():
+    global PARSING_ACTIVE
+    status_text = "▶️ Начать парсинг" if not PARSING_ACTIVE else "⏹ Остановить парсинг"
+    
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    button = types.InlineKeyboardButton(text='▶️ Начать парсинг', callback_data='button')
+    button = types.InlineKeyboardButton(text=status_text, callback_data='button')
     button1 = types.InlineKeyboardButton(text='🗑 Очистить кэш', callback_data='button1')
     button2 = types.InlineKeyboardButton(text='📊 Статистика', callback_data='button2')
     button3 = types.InlineKeyboardButton(text='🤖 Тест бота', callback_data='button3')
@@ -133,40 +186,42 @@ def comeback111():
 
 @bot.message_handler(commands=['start'])
 def start_bot(message):
-    bot.send_message(message.chat.id, "А вот и менюшка😊.", reply_markup=menu_button())
+    status_text = "🟢 Активен" if PARSING_ACTIVE else "🔴 Остановлен"
+    bot.send_message(message.chat.id, f"*🚀 MAX_Parser готов!*\nСтатус: {status_text}\n\nВыберите действие:", 
+                    reply_markup=menu_button(), parse_mode='Markdown')
 
-@bot.callback_query_handler(func=lambda call: call.data == 'button4')
-def new(call):
-    bot.edit_message_text("""Всем привет 👋  
-
-Представляю вам все обновления Max_parser!
-
-🚀 Что изменилось:  
-
-🕰️ Бот отправляет правильное время(когда его отправили в максе).  
-📸 Отправляет фотографии, сохраняя их качество.  
-📲 Каждое новое сообщение доставляется аккуратно и чётко, никаких пропусков или дубликатов.  
-💬 Сообщения стали красивыми, более удобными для чтения.
-                 
-⭐ Есть и небольшие минусы:  
-
-❌ Нормальный хост не найден, бот работает только при ручном запуске(если знаете бесплатные хосты, пишите в ЛС.)
-📂 Бот не может отправлять файлы""", call.message.chat.id, call.message.message_id, reply_markup=comeback())
-
-
-@bot.callback_query_handler(func=lambda call: call.data == 'button5')
-def info(call):
-    bot.edit_message_text("""Всем привет👋
-
-Данный бот специально разработан для удобной пересылки сообщений из Макса сюда👇.
-Только админ может управлять им.
-Вам доступны только кнопки 🆕Обновления и 📌О боте. 
-Приятного вам использования!""", call.message.chat.id, call.message.message_id, reply_markup=comeback())
-
+@bot.callback_query_handler(func=lambda call: call.data == 'button')
+def parse_max_command(call):
+    global PARSING_ACTIVE, PARSING_THREAD, CURRENT_CHAT_ID
+    chat_id = call.message.chat.id
+    
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
+        return
+    
+    if PARSING_ACTIVE:
+        PARSING_ACTIVE = False
+        CURRENT_CHAT_ID = None
+        bot.edit_message_text("🛑 *Автопарсинг остановлен*", chat_id, call.message.message_id, 
+                            reply_markup=comeback(), parse_mode='Markdown')
+        print("🛑 Автопарсинг остановлен")
+        return
+    
+    PARSING_ACTIVE = True
+    CURRENT_CHAT_ID = chat_id
+    bot.edit_message_text("▶️ *Автопарсинг ЗАПУЩЕН*\n⏳ Проверка каждые *20 сек*...", 
+                         chat_id, call.message.message_id, reply_markup=comeback(), parse_mode='Markdown')
+    print(f"🚀 Автопарсинг запущен для чата {chat_id}")
+    
+    PARSING_THREAD = threading.Thread(target=parse_max_loop, args=(chat_id,), daemon=True)
+    PARSING_THREAD.start()
 
 @bot.callback_query_handler(func=lambda call: call.data == 'button01')
 def callback_message(call):
-    bot.edit_message_text("А вот и менюшка😊", call.message.chat.id, call.message.message_id, reply_markup=menu_button())
+    status_text = "🟢 Активен" if PARSING_ACTIVE else "🔴 Остановлен"
+    bot.edit_message_text(f"*🚀 MAX_Parser готов!*\nСтатус: {status_text}\n\nВыберите действие:", 
+                         call.message.chat.id, call.message.message_id, 
+                         reply_markup=menu_button(), parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data == 'button001')
 def callback_message2(call):
@@ -178,49 +233,6 @@ def test(call):
         bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
         return
     bot.edit_message_text("✅ БОТ РАБОТАЕТ!", call.message.chat.id, call.message.message_id, reply_markup=comeback())
-
-@bot.callback_query_handler(func=lambda call: call.data == 'button')
-def parse_max_command(call):
-    chat_id = call.message.chat.id
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
-        return
-    
-    print(f"🔍 /parsemax от {chat_id}")
-    bot.edit_message_text("⏳ Парсю MAX...", chat_id, call.message.message_id, reply_markup=comeback())
-    bot.send_chat_action(chat_id, 'typing')
-
-    try:
-        posts = parse_max_group_media()
-        new_count = 0
-
-        if not posts:
-            bot.send_message(chat_id, "📭 Сообщений не найдено", reply_markup=comeback111())
-            return
-
-        print(f"📢 Найдено {len(posts)} постов")
-
-        for post in posts:
-            if is_new_message(post):
-                status = "👤"  
-
-                media_files = post.get('media_files', [])
-                media_sent = send_media_safely(chat_id, media_files, status, new_count+1, post['name'])
-
-                msg_text = format_message(post, status, new_count+1, media_sent)
-                bot.send_message(chat_id, msg_text)
-                
-                new_count += 1
-                print(f"✅ Отправлено: {post['name']} | 📁{media_sent}/{len(media_files)} файлов")
-
-        result = f"✅ {new_count} НОВЫХ из {len(posts)}" if new_count else "📭 Новых сообщений нету"
-        bot.send_message(chat_id, result, reply_markup=comeback111())
-        if new_count > 0:
-            save_cache()
-
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        bot.send_message(chat_id, f"❌ Ошибка: {str(e)}", reply_markup=comeback111())
 
 @bot.callback_query_handler(func=lambda call: call.data == 'button1')
 def clear_cache(call):
@@ -239,8 +251,49 @@ def status(call):
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, text="Это команда только для админа 🤓.\n\nИди почитай 📌О боте")
         return
+    global seen_hashes
     cache_count = len(seen_hashes)
-    bot.edit_message_text(f"📊 СТАТИСТИКА:\n📦 Кэш: {cache_count} сообщений", call.message.chat.id, call.message.message_id, reply_markup=comeback())
+    status_text = "🟢 Активен" if PARSING_ACTIVE else "🔴 Остановлен"
+    bot.edit_message_text(f"📊 СТАТИСТИКА:\n📦 Кэш: *{cache_count} сообщений*\n Парсинг: {status_text}", 
+                         call.message.chat.id, call.message.message_id, 
+                         reply_markup=comeback(), parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data == 'status_only')
+def status_only(call):
+    global PARSING_ACTIVE
+    status_text = "🟢 Активен" if PARSING_ACTIVE else "🔴 Остановлен"
+    bot.answer_callback_query(call.id, text=f"Статус парсинга: {status_text}")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'button4')
+def new(call):
+    bot.edit_message_text("""*Всем привет 👋*  
+    
+Представляю вам все обновления *Max_parser!*
+
+🚀 *Что изменилось: * 
+
+🕰️ Бот отправляет правильное время(когда его отправили в максе).  
+📸 Отправляет фотографии, сохраняя их качество.  
+📲 Каждое новое сообщение доставляется аккуратно и чётко, никаких пропусков или дубликатов.  
+💬 Сообщения стали красивыми, более удобными для чтения.
+✨ Добавлена удобная кнопка, которая автоматически собирает сообщения каждые 20 секунд.
+🔥 Больше никакой ручной работы — информация сама прилетит к вам вовремя!
+🚀 Сейчас проводится тестировка хоста Replit, надеюсь, что будет работать штатно.
+    """, 
+                         call.message.chat.id, call.message.message_id, 
+                         reply_markup=comeback(), parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data == 'button5')
+def info(call):
+    bot.edit_message_text("""*Всем привет👋*
+    
+Данный бот специально разработан для удобной пересылки сообщений из Макса сюда👇.
+Только админ может управлять им. Если хотите, то можете попробовать:)
+Вам доступны только кнопки *🆕Обновления* и *📌О боте*.
+                      
+*Приятного вам использования!*""", 
+                         call.message.chat.id, call.message.message_id, 
+                         reply_markup=comeback(), parse_mode='Markdown')
 
 try:
     bot.infinity_polling(none_stop=True)

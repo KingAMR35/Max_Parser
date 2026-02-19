@@ -244,7 +244,6 @@ def session_is_valid(page) -> bool:
     except:
         return False
 
-
 def parse_max_group_media() -> List[Dict]:
     print("🔥 ПАРСИНГ: seen_messages.json + СТАРЫЕ→НОВЫЕ")
     load_message_cache()
@@ -319,7 +318,7 @@ def parse_max_group_media() -> List[Dict]:
                 except:
                     continue
             
-            post_candidates.sort(key=lambda x: x['timestamp'])  # СТАРЫЕ ПЕРВЫМИ
+            post_candidates.sort(key=lambda x: x['timestamp']) 
             print(f"📊 Постов (СТАРЫЕ→НОВЫЕ): {len(post_candidates)}")
             
             photo_posts = 0
@@ -331,7 +330,7 @@ def parse_max_group_media() -> List[Dict]:
                     text = candidate['text']
                     
                     post = {'name': '👤', 'text': text}
-                    if not is_new_message(post):  # seen_messages.json
+                    if not is_new_message(post): 
                         continue
                     
                     name = "👤"
@@ -349,7 +348,7 @@ def parse_max_group_media() -> List[Dict]:
                         if not is_photo_not_avatar(src, img):
                             continue
                         
-                        local_path = download_file(src)  # cache_file.json
+                        local_path = download_file(src)
                         if local_path:
                             media_files.append({
                                 'url': src, 'local_path': local_path, 'type': 'image'
